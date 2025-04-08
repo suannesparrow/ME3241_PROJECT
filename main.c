@@ -1,49 +1,85 @@
 #include "gba.h"
 #include "sprites.h"
-#include "Console_Input.h"
+#include "Inputs.h"
 
 #define MAX_SNAKE_LENGTH 100
 
-// Snake segment positions
+// Snake data
 int snakeLength = 3;
 int snakeX[MAX_SNAKE_LENGTH] = {80, 76, 72};
 int snakeY[MAX_SNAKE_LENGTH] = {80, 80, 80};
 
-// Prey position
+// Prey data
 int preyX = 120;
 int preyY = 80;
 
-// Snake movement direction
+// Snake direction
 int dx = 4;
 int dy = 0;
 
-// Game state flag
+// Game state
 int gameRunning = 1;
 
-// Delay to control game speed (waits for vertical blanking)
-void waitFrames(int frames) {
-    for (int i = 0; i < frames; i++) {
-        while (REG_VCOUNT >= 160);
-        while (REG_VCOUNT < 160);
+//======================================================
+// Interrupt Handler (called on Timer 0 overflow)
+//======================================================
+void Handler(void) {
+    REG_IME = 0; // Disable interrupts
+
+    // Timer0 interrupt check
+    if (REG_IF & INT_TIMER0) {
+        if (gameRunning) {
+            checkInput();
+            updateSnake();
+            fillSprites();
+            drawSnakeBody();
+            drawPrey();
+        }
+
+        REG_IF |= INT_TIMER0; // Acknowledge Timer0 interrupt
     }
+
+    REG_IME = 1; // Re-enable interrupts
 }
 
-// Moves the snake and checks for prey collision
+//======================================================
+// Delay-free Game Update: Uses Timer for Timing
+//======================================================
+void setupTimerAndInterrupts() {
+    // Set interrupt handler
+    REG_INT = (unsigned int) &Handler;
+
+    // Enable interrupt for Timer 0
+    REG_IE = INT_TIMER0;
+    REG_IME = 1;  // Enable global interrupt handling
+
+    // Timer0 settings: overflow ~10 times/sec
+    // 65536 - 62500 = 3036 (with 1024 prescaler)
+    REG_TM0D = 3036; // Start value
+    REG_TM0CNT = TIMER_FREQUENCY_1024 | TIMER_ENABLE | TIMER_INTERRUPTS;
+}
+
+//======================================================
+// Update the snake's body and check for prey collision
+//======================================================
 void updateSnake() {
+    // Move body
     for (int i = snakeLength - 1; i > 0; i--) {
         snakeX[i] = snakeX[i - 1];
         snakeY[i] = snakeY[i - 1];
     }
+
+    // Move head
     snakeX[0] += dx;
     snakeY[0] += dy;
 
-    // Wrap around screen boundaries
+    // Wrap around screen
     if (snakeX[0] >= SCREEN_WIDTH) snakeX[0] = 0;
     if (snakeX[0] < 0) snakeX[0] = SCREEN_WIDTH - 8;
     if (snakeY[0] >= SCREEN_HEIGHT) snakeY[0] = 0;
     if (snakeY[0] < 0) snakeY[0] = SCREEN_HEIGHT - 8;
 
-    // If snake head touches prey, grow snake and relocate prey
+    // Eat prey
     if (snakeX[0] == preyX && snakeY[0] == preyY && snakeLength < MAX_SNAKE_LENGTH) {
         snakeLength++;
         preyX = (rand() % 28) * 8;
@@ -51,37 +87,38 @@ void updateSnake() {
     }
 }
 
-// Draws each segment of the snake using sprite slots
+//======================================================
+// Draw the snake's body
+//======================================================
 void drawSnakeBody() {
     for (int i = 0; i < snakeLength; i++) {
         drawSprite(SNAKE_BODY, i, snakeX[i], snakeY[i]);
     }
 }
 
-// Draws the prey sprite on screen
+//======================================================
+// Draw the prey
+//======================================================
 void drawPrey() {
     drawSprite(PREY, 127, preyX, preyY);
 }
 
-// Game entry point
+//======================================================
+// Entry point
+//======================================================
 int main(void) {
-    // Set video mode to Mode 2, enable sprites, use 1D mapping
+    // Set video mode: Mode 2 + OBJ enabled + 1D mapping
     REG_DISPCNT = MODE2 | OBJ_ENABLE | OBJ_MAP_1D;
 
-    // Load palette and sprite graphics
+    // Load graphics
     fillPalette();
     fillSprites();
 
-    // Game loop
-    while (1) {
-        if (gameRunning) {
-            checkInput();       // handle player input
-            updateSnake();      // move the snake
-            fillSprites();      // clear all sprite positions
-            drawSnakeBody();    // draw updated snake
-            drawPrey();         // draw the prey
-        }
-        waitFrames(10);         // control game speed
-    }
+    // Set up interrupts and timer
+    setupTimerAndInterrupts();
+
+    // Main loop just idles; game runs in handler
+    while (1);
+
     return 0;
 }
